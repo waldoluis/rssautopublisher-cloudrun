@@ -4,8 +4,7 @@ const express = require('express'); // Necesario para iniciar un servidor HTTP e
 const Parser = require('rss-parser');
 const parser = new Parser();
 const { VertexAI } = require('@google-cloud/vertexai');
-const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
-const axios = require('axios'); // Para hacer peticiones HTTP a la API de Facebook
+// No se necesitan SecretManagerServiceClient ni axios para esta versión sin Facebook.
 
 const app = express();
 app.use(express.json()); // Para parsear cuerpos JSON en caso de que el trigger sea un POST con body
@@ -21,24 +20,12 @@ const model = vertex_ai.getGenerativeModel({
 });
 
 const generationConfig = {
-  temperature: 0.7,
+  temperature: 0.7, // Un poco más creativo para una nota periodística
 };
 
-const secretManagerClient = new SecretManagerServiceClient();
+// No se necesitan secretManagerClient ni accessSecretVersion para esta versión sin Facebook.
 
-// Función auxiliar para acceder a secretos de Secret Manager
-async function accessSecretVersion(secretId, versionId = 'latest') {
-    try {
-        const name = `projects/${project}/secrets/${secretId}/versions/${versionId}`;
-        const [version] = await secretManagerClient.accessSecretVersion({ name });
-        return version.payload.data.toString('utf8');
-    } catch (error) {
-        console.error(`Error al acceder al secreto '${secretId}': ${error.message}`);
-        throw new Error(`No se pudo acceder al secreto necesario: ${secretId}`);
-    }
-}
-
-// Lista de RSS que analizarás (¡VERSION ACTUALIZADA Y CORRECTA!)
+// Lista de RSS que analizarás (VERSION ACTUALIZADA Y CORRECTA)
 const rssFeeds = [
   'https://www.excelsior.com.mx/rss.xml',
   'https://elpais.com/rss/feed.html?feedId=1022',
@@ -48,11 +35,11 @@ const rssFeeds = [
 ];
 
 /**
- * Función principal que ejecuta la lógica de lectura de RSS, generación de copy y publicación en Facebook.
+ * Función principal que ejecuta la lógica de lectura de RSS y generación de nota periodística.
  * Se envolverá en una ruta HTTP para Cloud Run.
  */
-async function executeRssToFacebookFlow() {
-  console.log('Inicio de la ejecución del flujo RSS a Facebook.');
+async function executeRssToNewsArticleFlow() { // Nuevo nombre para reflejar el cambio
+  console.log('Inicio de la ejecución del flujo RSS a Nota Periodística con Gemini.');
   let noticias = [];
 
   // --- 1. Leer todos los feeds RSS y recopilar noticias ---
@@ -77,28 +64,27 @@ async function executeRssToFacebookFlow() {
 
   noticias.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
   const noticiasParaProcesar = noticias.slice(0, 5); // Procesar las 5 noticias más recientes
-  console.log(`Se seleccionaron ${noticiasParaProcesar.length} noticias para procesar con Gemini.`);
+  console.log(`Se seleccionaron ${noticiasParaProcesar.length} noticias para generar notas periodísticas.`);
 
-  // --- 2. Generar copies para cada noticia con Gemini ---
-  const copiesGenerados = [];
+  // --- 2. Generar notas periodísticas para cada noticia con Gemini ---
+  const notasGeneradas = [];
   if (noticiasParaProcesar.length === 0) {
-      console.log('No hay noticias nuevas o seleccionadas para generar copys.');
+      console.log('No hay noticias nuevas o seleccionadas para generar notas periodísticas.');
   }
 
   for (const noticia of noticiasParaProcesar) {
-    console.log(`Generando copy para: "${noticia.title}"`);
-    const prompt = `Redacta un copy atractivo para Facebook basado en la siguiente noticia. El estilo debe ser informativo y con tono periodístico, incluyendo:
+    console.log(`Generando nota periodística para: "${noticia.title}"`);
+    const prompt = `Basado en la siguiente noticia, escribe una nota periodística completa y detallada, con un estilo profesional y objetivo. Incluye:
 
-1. Gancho o frase inicial llamativa.
-2. Resumen claro en 1 o 2 frases.
-3. Llamado a la acción para leer más.
-4. Usa máximo 4 emojis.
-
-No uses hashtags ni menciones. Máximo 4 líneas.
+1.  Un titular informativo y atractivo.
+2.  Un lead (primer párrafo) que resuma lo más importante (qué, quién, cuándo, dónde, por qué).
+3.  Desarrollo del cuerpo de la noticia con detalles adicionales, contexto, y si es posible, declaraciones o implicaciones (si la información lo permite).
+4.  Cierre o conclusión.
+5.  La nota debe tener una extensión adecuada para un artículo breve (aproximadamente 3-5 párrafos).
 
 Título de la Noticia: "${noticia.title}"
 Contenido/Extracto: "${noticia.contentSnippet}"
-Enlace: ${noticia.link}`;
+Enlace Original: ${noticia.link}`;
 
     const request = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -107,87 +93,31 @@ Enlace: ${noticia.link}`;
 
     try {
       const result = await model.generateContent(request);
-      const generatedCopy = result.response.candidates[0].content.parts[0].text;
-      console.log(`Copy generado para "${noticia.title}": ${generatedCopy}`);
+      const generatedArticle = result.response.candidates[0].content.parts[0].text;
+      console.log(`Nota periodística generada para "${noticia.title}":\n${generatedArticle.substring(0, 200)}...`); // Muestra solo un extracto en logs
 
-      copiesGenerados.push({
+      notasGeneradas.push({
         title: noticia.title,
-        copy: generatedCopy,
-        link: noticia.link,
-        source: noticia.source
+        originalLink: noticia.link,
+        source: noticia.source,
+        newsArticle: generatedArticle // Aquí guardamos la nota periodística completa
       });
     } catch (geminiError) {
-      console.error(`[ERROR] Fallo al generar copy con Gemini para "${noticia.title}": ${geminiError.message}`);
+      console.error(`[ERROR] Fallo al generar nota periodística con Gemini para "${noticia.title}": ${geminiError.message}`);
     }
   }
 
-  // --- 3. Publicar los copies generados en Facebook ---
-  console.log('Comenzando la publicación en Facebook...');
-  let FACEBOOK_PAGE_ACCESS_TOKEN;
-  try {
-      FACEBOOK_PAGE_ACCESS_TOKEN = await accessSecretVersion('facebook-page-access-token');
-  } catch (error) {
-      console.error(error.message); // El error ya se maneja en accessSecretVersion
-      return { success: false, message: 'Fallo al acceder al token de Facebook.' };
-  }
-
-  const FACEBOOK_PAGE_ID = process.env.FACEBOOK_PAGE_ID; // Se obtiene de las variables de entorno
-
-  if (!FACEBOOK_PAGE_ID) {
-      console.error('[ERROR] La variable de entorno FACEBOOK_PAGE_ID no está configurada. No se publicará en Facebook.');
-      return { success: false, message: 'Error de configuración: FACEBOOK_PAGE_ID no encontrado.' };
-  }
-
-  const facebookPublishResults = [];
-  if (copiesGenerados.length === 0) {
-      console.log('No hay copys generados para publicar en Facebook.');
-  }
-
-  for (const item of copiesGenerados) {
-      const message = `${item.copy}\n\nLee más aquí: ${item.link}`;
-      const facebookApiUrl = `https://graph.facebook.com/${FACEBOOK_PAGE_ID}/feed`;
-
-      try {
-          console.log(`Intentando publicar en Facebook: "${item.title}"`);
-          const response = await axios.post(facebookApiUrl, null, {
-              params: {
-                  message: message,
-                  link: item.link, // Esto ayuda a Facebook a generar la previsualización del enlace
-                  access_token: FACEBOOK_PAGE_ACCESS_TOKEN
-              }
-          });
-          console.log(`[ÉXITO] Publicado en Facebook: "${item.title}". ID del post: ${response.data.id}`);
-          facebookPublishResults.push({
-              title: item.title,
-              status: 'success',
-              facebookPostId: response.data.id,
-              link: item.link
-          });
-      } catch (facebookError) {
-          console.error(`[ERROR] Fallo al publicar "${item.title}" en Facebook: ${facebookError.message}`);
-          if (facebookError.response) {
-              console.error(`Respuesta de error de Facebook: ${JSON.stringify(facebookError.response.data)}`);
-          }
-          facebookPublishResults.push({
-              title: item.title,
-              status: 'failed',
-              error: facebookError.message,
-              link: item.link
-          });
-      }
-  }
-
-  console.log('Finalizando la ejecución del flujo RSS a Facebook.');
+  // --- En esta versión, el proceso se detiene aquí. No hay publicación en Facebook. ---
+  console.log('Finalizando la ejecución del flujo RSS a Nota Periodística. No se generarán copys para redes sociales ni publicaciones.');
+  
   return {
     success: true,
-    message: 'Análisis de RSS, generación de copy y publicación en Facebook completados.',
+    message: 'Análisis de RSS y generación de notas periodísticas completados.',
     summary: {
         totalNewsFound: noticias.length,
-        newsProcessedByGemini: copiesGenerados.length,
-        newsPublishedToFacebook: facebookPublishResults.filter(r => r.status === 'success').length
+        newsArticlesGenerated: notasGeneradas.length
     },
-    processedNewsWithCopies: copiesGenerados,
-    facebookPublishResults: facebookPublishResults
+    generatedNewsArticles: notasGeneradas // Devolvemos las notas periodísticas generadas
   };
 }
 
@@ -195,7 +125,7 @@ Enlace: ${noticia.link}`;
 // Definir una ruta HTTP para activar el flujo
 app.post('/', async (req, res) => {
     try {
-        const result = await executeRssToFacebookFlow();
+        const result = await executeRssToNewsArticleFlow();
         if (result.success) {
             res.status(200).json(result);
         } else {
