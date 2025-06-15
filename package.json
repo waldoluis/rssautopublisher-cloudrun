@@ -1,0 +1,20 @@
+{
+  "name": "rssautopublisher",
+  "version": "1.0.0",
+  "description": "Cloud Run service to read RSS, generate copy with Gemini, and publish to Facebook.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "rss-parser": "^3.13.0",
+    "@google-cloud/vertexai": "^0.6.0",
+    "@google-cloud/secret-manager": "^5.0.0",
+    "axios": "^1.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": true
+}
