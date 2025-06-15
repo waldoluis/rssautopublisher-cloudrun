@@ -27,10 +27,10 @@ const generationConfig = {
 
 // Lista de RSS que analizarás (VERSION ACTUALIZADA Y CORRECTA)
 const rssFeeds = [
-  'https://www.excelsior.com.mx/rss.xml',
-  'https://elpais.com/rss/feed.html?feedId=1022',
-  'https://www.eleconomista.com.mx/rss.html',
-  'https://www.jornada.com.mx/v7.0/cgi/rss.php',
+  'https://www.excelsior.com.mx/rss',
+  'https://elpais.com/rss',
+  'https://www.eleconomista.com.mx/rss',
+  'https://www.jornada.com.mx/v7.0/cgi/rss',
   'https://www.proceso.com.mx/rss/',
 ];
 
