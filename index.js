@@ -29,9 +29,9 @@ const generationConfig = {
 const rssFeeds = [
   'https://www.excelsior.com.mx/rss',
   'https://elpais.com/rss',
-  'https://www.eleconomista.com.mx/rss',
-  'https://www.jornada.com.mx/v7.0/cgi/rss',
-  'https://www.proceso.com.mx/rss/',
+  'https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/mexico/portada',
+  'https://editorial.aristeguinoticias.com/category/mexico/feed/',
+  'https://heraldodemexico.com.mx/rss/feed.html?r=4',
 ];
 
 /**
