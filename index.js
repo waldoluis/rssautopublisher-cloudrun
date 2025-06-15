@@ -20,25 +20,24 @@ const model = vertex_ai.getGenerativeModel({
 });
 
 const generationConfig = {
-  temperature: 0.7, // Un poco más creativo para una nota periodística
+  temperature: 0.7, // Un poco más creativo para una nota periodística y copy
 };
 
-// No se necesitan secretManagerClient ni accessSecretVersion para esta versión sin Facebook.
-
-// Lista de RSS que analizarás (VERSION ACTUALIZADA Y CORRECTA)
+// Lista de RSS que analizarás (VERSION ACTUALIZADA Y CORRECTA - Proceso Eliminado)
 const rssFeeds = [
-  'https://www.excelsior.com.mx/rss',
-  'https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/mexico/portada',
-  'https://editorial.aristeguinoticias.com/category/mexico/feed/',
-  'https://heraldodemexico.com.mx/rss/feed.html?r=4',
+  'https://www.excelsior.com.mx/rss.xml',
+  'https://elpais.com/rss/feed.html?feedId=1022',
+  'https://www.eleconomista.com.mx/rss.html',
+  'https://www.jornada.com.mx/v7.0/cgi/rss.php',
+  // 'https://www.proceso.com.mx/rss/', // Eliminado por problemas de formato
 ];
 
 /**
- * Función principal que ejecuta la lógica de lectura de RSS y generación de nota periodística.
+ * Función principal que ejecuta la lógica de lectura de RSS, generación de nota periodística y copy para redes.
  * Se envolverá en una ruta HTTP para Cloud Run.
  */
-async function executeRssToNewsArticleFlow() { // Nuevo nombre para reflejar el cambio
-  console.log('Inicio de la ejecución del flujo RSS a Nota Periodística con Gemini.');
+async function executeRssToNewsArticleAndSocialCopyFlow() { // Nuevo nombre de función
+  console.log('Inicio de la ejecución del flujo RSS a Nota Periodística y Copy para Redes con Gemini.');
   let noticias = [];
 
   // --- 1. Leer todos los feeds RSS y recopilar noticias ---
@@ -63,17 +62,22 @@ async function executeRssToNewsArticleFlow() { // Nuevo nombre para reflejar el 
 
   noticias.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
   const noticiasParaProcesar = noticias.slice(0, 5); // Procesar las 5 noticias más recientes
-  console.log(`Se seleccionaron ${noticiasParaProcesar.length} noticias para generar notas periodísticas.`);
+  console.log(`Se seleccionaron ${noticiasParaProcesar.length} noticias para generar notas periodísticas y copys de redes.`);
 
-  // --- 2. Generar notas periodísticas para cada noticia con Gemini ---
-  const notasGeneradas = [];
+  // --- 2. Generar notas periodísticas y copies para redes con Gemini ---
+  const resultadosGenerados = []; // Cambiado el nombre para incluir ambos resultados
   if (noticiasParaProcesar.length === 0) {
-      console.log('No hay noticias nuevas o seleccionadas para generar notas periodísticas.');
+      console.log('No hay noticias nuevas o seleccionadas para procesar.');
   }
 
   for (const noticia of noticiasParaProcesar) {
-    console.log(`Generando nota periodística para: "${noticia.title}"`);
-    const prompt = `Basado en la siguiente noticia, escribe una nota periodística completa y detallada, con un estilo profesional y objetivo. Incluye:
+    console.log(`Procesando noticia: "${noticia.title}"`);
+
+    let generatedArticle = '';
+    let socialMediaCopy = '';
+
+    // --- PRIMERA LLAMADA A GEMINI: Generar Nota Periodística ---
+    const newsArticlePrompt = `Basado en la siguiente noticia, escribe una nota periodística completa y detallada, con un estilo profesional y objetivo. Incluye:
 
 1.  Un titular informativo y atractivo.
 2.  Un lead (primer párrafo) que resuma lo más importante (qué, quién, cuándo, dónde, por qué).
@@ -85,38 +89,66 @@ Título de la Noticia: "${noticia.title}"
 Contenido/Extracto: "${noticia.contentSnippet}"
 Enlace Original: ${noticia.link}`;
 
-    const request = {
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    const newsArticleRequest = {
+      contents: [{ role: 'user', parts: [{ text: newsArticlePrompt }] }],
       generationConfig,
     };
 
     try {
-      const result = await model.generateContent(request);
-      const generatedArticle = result.response.candidates[0].content.parts[0].text;
-      console.log(`Nota periodística generada para "${noticia.title}":\n${generatedArticle.substring(0, 200)}...`); // Muestra solo un extracto en logs
-
-      notasGeneradas.push({
-        title: noticia.title,
-        originalLink: noticia.link,
-        source: noticia.source,
-        newsArticle: generatedArticle // Aquí guardamos la nota periodística completa
-      });
+      const newsArticleResult = await model.generateContent(newsArticleRequest);
+      generatedArticle = newsArticleResult.response.candidates[0].content.parts[0].text;
+      console.log(`Nota periodística generada para "${noticia.title}":\n${generatedArticle.substring(0, 200)}...`);
     } catch (geminiError) {
       console.error(`[ERROR] Fallo al generar nota periodística con Gemini para "${noticia.title}": ${geminiError.message}`);
+      // Continuar aunque falle la nota para intentar generar el copy, o puedes optar por saltar esta noticia
+      generatedArticle = `[ERROR AL GENERAR NOTA: ${geminiError.message}]`;
     }
+
+    // --- SEGUNDA LLAMADA A GEMINI: Generar Copy para Redes Sociales (usando la nota generada) ---
+    if (generatedArticle && !generatedArticle.startsWith('[ERROR AL GENERAR NOTA')) { // Solo si la nota se generó bien
+        const socialMediaCopyPrompt = `Crea un copy corto y atractivo para redes sociales (máximo 2 líneas, con 1-2 emojis) basado en la siguiente nota periodística. El objetivo es captar la atención y dirigir al lector a leer más. No incluyas hashtags ni menciones.
+
+        Nota periodística:
+        "${generatedArticle}"`;
+
+        const socialMediaCopyRequest = {
+            contents: [{ role: 'user', parts: [{ text: socialMediaCopyPrompt }] }],
+            generationConfig,
+        };
+
+        try {
+            const socialMediaCopyResult = await model.generateContent(socialMediaCopyRequest);
+            socialMediaCopy = socialMediaCopyResult.response.candidates[0].content.parts[0].text;
+            console.log(`Copy para redes generado para "${noticia.title}": ${socialMediaCopy}`);
+        } catch (copyError) {
+            console.error(`[ERROR] Fallo al generar copy para redes con Gemini para "${noticia.title}": ${copyError.message}`);
+            socialMediaCopy = `[ERROR AL GENERAR COPY: ${copyError.message}]`;
+        }
+    } else {
+        socialMediaCopy = '[NO SE GENERÓ COPY POR ERROR EN LA NOTA]';
+    }
+
+
+    resultadosGenerados.push({
+      title: noticia.title,
+      originalLink: noticia.link,
+      source: noticia.source,
+      newsArticle: generatedArticle,
+      socialMediaCopy: socialMediaCopy // ¡Nuevo campo para el copy de redes!
+    });
   }
 
-  // --- En esta versión, el proceso se detiene aquí. No hay publicación en Facebook. ---
-  console.log('Finalizando la ejecución del flujo RSS a Nota Periodística. No se generarán copys para redes sociales ni publicaciones.');
+  console.log('Finalizando la ejecución del flujo RSS a Nota Periodística y Copy para Redes. No se realizarán publicaciones.');
   
   return {
     success: true,
-    message: 'Análisis de RSS y generación de notas periodísticas completados.',
+    message: 'Análisis de RSS, generación de notas periodísticas y copies para redes completados.',
     summary: {
         totalNewsFound: noticias.length,
-        newsArticlesGenerated: notasGeneradas.length
+        newsArticlesGenerated: resultadosGenerados.filter(r => !r.newsArticle.startsWith('[ERROR')).length,
+        socialMediaCopiesGenerated: resultadosGenerados.filter(r => !r.socialMediaCopy.startsWith('[ERROR')).length
     },
-    generatedNewsArticles: notasGeneradas // Devolvemos las notas periodísticas generadas
+    generatedContent: resultadosGenerados // Devolvemos ambos resultados
   };
 }
 
@@ -124,7 +156,7 @@ Enlace Original: ${noticia.link}`;
 // Definir una ruta HTTP para activar el flujo
 app.post('/', async (req, res) => {
     try {
-        const result = await executeRssToNewsArticleFlow();
+        const result = await executeRssToNewsArticleAndSocialCopyFlow(); // Nuevo nombre de función
         if (result.success) {
             res.status(200).json(result);
         } else {
