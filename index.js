@@ -1,44 +1,120 @@
 // index.js
 
-const express = require('express'); // Necesario para iniciar un servidor HTTP en Cloud Run
+const express = require('express');
 const Parser = require('rss-parser');
 const parser = new Parser();
 const { VertexAI } = require('@google-cloud/vertexai');
-// No se necesitan SecretManagerServiceClient ni axios para esta versión sin Facebook.
+const { SecretManagerServiceClient } = require('@google-cloud/secret-manager'); // Re-importado para credenciales de WordPress
+const axios = require('axios'); // Re-importado para la API de WordPress
 
 const app = express();
-app.use(express.json()); // Para parsear cuerpos JSON en caso de que el trigger sea un POST con body
+app.use(express.json());
 
 // --- Configuración de Google Cloud ---
-const project = process.env.GCP_PROJECT || 'zapzap-462322'; // Usa la variable de entorno o tu Project ID
-const location = 'us-central1'; // Asegúrate de que esta sea la región donde está tu modelo Gemini
+const project = process.env.GCP_PROJECT || 'zapzap-462322';
+const location = 'us-central1';
 
 // Inicialización del cliente de Vertex AI para Gemini
 const vertex_ai = new VertexAI({ project, location });
 const model = vertex_ai.getGenerativeModel({
-  model: 'gemini-2.0-flash-001' // Asegúrate de que este modelo esté disponible en tu región
+  model: 'gemini-2.0-flash-001'
 });
 
 const generationConfig = {
-  temperature: 0.7, // Un poco más creativo para una nota periodística y copy
+  temperature: 0.7,
 };
 
-// Lista de RSS que analizarás (VERSION ACTUALIZADA Y CORRECTA - Proceso Eliminado)
+const secretManagerClient = new SecretManagerServiceClient(); // Inicializado para Secret Manager
+
+// Función auxiliar para acceder a secretos de Secret Manager
+async function accessSecretVersion(secretId, versionId = 'latest') {
+    try {
+        const name = `projects/${project}/secrets/${secretId}/versions/${versionId}`;
+        const [version] = await secretManagerClient.accessSecretVersion({ name });
+        return version.payload.data.toString('utf8');
+    } catch (error) {
+        console.error(`Error al acceder al secreto '${secretId}': ${error.message}`);
+        throw new Error(`No se pudo acceder al secreto necesario: ${secretId}`);
+    }
+}
+
+// Lista de RSS que analizarás (Proceso eliminado)
 const rssFeeds = [
   'https://www.excelsior.com.mx/rss.xml',
   'https://elpais.com/rss/feed.html?feedId=1022',
   'https://www.eleconomista.com.mx/rss.html',
   'https://www.jornada.com.mx/v7.0/cgi/rss.php',
-  // 'https://www.proceso.com.mx/rss/', // Eliminado por problemas de formato
 ];
 
 /**
- * Función principal que ejecuta la lógica de lectura de RSS, generación de nota periodística y copy para redes.
- * Se envolverá en una ruta HTTP para Cloud Run.
+ * Función para publicar una nota en WordPress.
+ * Requiere la URL de la API de WordPress y el Application Password.
  */
-async function executeRssToNewsArticleAndSocialCopyFlow() { // Nuevo nombre de función
-  console.log('Inicio de la ejecución del flujo RSS a Nota Periodística y Copy para Redes con Gemini.');
+async function publishToWordPress(title, content, link, socialMediaCopy, credentials) {
+    const { wordpressApiUrl, wordpressApplicationPassword } = credentials;
+
+    // Puedes elegir qué contenido enviar. Aquí envío la nota completa y el copy como contenido.
+    // También puedes crear un post separado para el copy de redes, o incluirlo en la nota.
+    // Para este ejemplo, la nota es el contenido principal y el copy de redes va al final.
+    const postContent = `<p>${content}</p>
+    <p><strong>Enlace original:</strong> <a href="${link}">${link}</a></p>
+    <p><strong>Copy para Redes Sociales:</strong> ${socialMediaCopy}</p>
+    `;
+
+
+    const data = {
+        title: title,
+        content: postContent,
+        status: 'publish', // O 'draft' para revisar antes de publicar
+        // Puedes añadir más campos aquí, como categorías, etiquetas, etc.
+        // Por ejemplo: categories: [1, 2], tags: [3, 4]
+    };
+
+    try {
+        console.log(`Intentando publicar en WordPress: "${title}"`);
+        const response = await axios.post(wordpressApiUrl, data, {
+            headers: {
+                'Content-Type': 'application/json',
+                // La autenticación básica usa "usuario:ApplicationPassword" codificado en Base64
+                'Authorization': `Basic ${Buffer.from(`tu_usuario_wordpress:${wordpressApplicationPassword}`).toString('base64')}`
+            }
+        });
+        console.log(`[ÉXITO] Publicado en WordPress: "${title}". ID del post: ${response.data.id}`);
+        return { status: 'success', postId: response.data.id, link: response.data.link };
+    } catch (wpError) {
+        console.error(`[ERROR] Fallo al publicar "${title}" en WordPress: ${wpError.message}`);
+        if (wpError.response) {
+            console.error(`Respuesta de error de WordPress: ${JSON.stringify(wpError.response.data)}`);
+        }
+        return { status: 'failed', error: wpError.message };
+    }
+}
+
+
+/**
+ * Función principal que ejecuta la lógica de lectura de RSS, generación de nota periodística y copy para redes, y publicación en WordPress.
+ */
+async function executeRssToWordPressFlow() {
+  console.log('Inicio de la ejecución del flujo RSS a Nota Periodística, Copy para Redes y Publicación en WordPress.');
   let noticias = [];
+  let wordpressCredentials;
+
+  // --- Obtener credenciales de WordPress de Secret Manager ---
+  try {
+      const credsJson = await accessSecretVersion('wordpress-api-credentials');
+      wordpressCredentials = JSON.parse(credsJson);
+      // Validar que las credenciales tienen los campos esperados
+      if (!wordpressCredentials.wordpressApiUrl || !wordpressCredentials.wordpressApplicationPassword || !wordpressCredentials.wordpressUsername) {
+          throw new Error('Las credenciales de WordPress no están completas en Secret Manager.');
+      }
+      // Reemplaza 'tu_usuario_wordpress' en la autorización con el usuario real
+      wordpressCredentials.authHeader = `Basic ${Buffer.from(`${wordpressCredentials.wordpressUsername}:${wordpressCredentials.wordpressApplicationPassword}`).toString('base64')}`;
+      console.log('Credenciales de WordPress obtenidas con éxito.');
+  } catch (error) {
+      console.error(`[ERROR FATAL] No se pudieron obtener o parsear las credenciales de WordPress: ${error.message}`);
+      return { success: false, message: 'Fallo al obtener las credenciales de WordPress.' };
+  }
+
 
   // --- 1. Leer todos los feeds RSS y recopilar noticias ---
   console.log('Comenzando la lectura de feeds RSS...');
@@ -62,10 +138,10 @@ async function executeRssToNewsArticleAndSocialCopyFlow() { // Nuevo nombre de f
 
   noticias.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
   const noticiasParaProcesar = noticias.slice(0, 5); // Procesar las 5 noticias más recientes
-  console.log(`Se seleccionaron ${noticiasParaProcesar.length} noticias para generar notas periodísticas y copys de redes.`);
+  console.log(`Se seleccionaron ${noticiasParaProcesar.length} noticias para procesar.`);
 
-  // --- 2. Generar notas periodísticas y copies para redes con Gemini ---
-  const resultadosGenerados = []; // Cambiado el nombre para incluir ambos resultados
+  // --- 2. Generar notas periodísticas y copies para redes con Gemini y publicar ---
+  const processingResults = [];
   if (noticiasParaProcesar.length === 0) {
       console.log('No hay noticias nuevas o seleccionadas para procesar.');
   }
@@ -75,6 +151,7 @@ async function executeRssToNewsArticleAndSocialCopyFlow() { // Nuevo nombre de f
 
     let generatedArticle = '';
     let socialMediaCopy = '';
+    let wordpressPublishResult = { status: 'skipped', message: 'No se intentó publicar.' };
 
     // --- PRIMERA LLAMADA A GEMINI: Generar Nota Periodística ---
     const newsArticlePrompt = `Basado en la siguiente noticia, escribe una nota periodística completa y detallada, con un estilo profesional y objetivo. Incluye:
@@ -100,12 +177,11 @@ Enlace Original: ${noticia.link}`;
       console.log(`Nota periodística generada para "${noticia.title}":\n${generatedArticle.substring(0, 200)}...`);
     } catch (geminiError) {
       console.error(`[ERROR] Fallo al generar nota periodística con Gemini para "${noticia.title}": ${geminiError.message}`);
-      // Continuar aunque falle la nota para intentar generar el copy, o puedes optar por saltar esta noticia
       generatedArticle = `[ERROR AL GENERAR NOTA: ${geminiError.message}]`;
     }
 
     // --- SEGUNDA LLAMADA A GEMINI: Generar Copy para Redes Sociales (usando la nota generada) ---
-    if (generatedArticle && !generatedArticle.startsWith('[ERROR AL GENERAR NOTA')) { // Solo si la nota se generó bien
+    if (generatedArticle && !generatedArticle.startsWith('[ERROR AL GENERAR NOTA')) {
         const socialMediaCopyPrompt = `Crea un copy corto y atractivo para redes sociales (máximo 2 líneas, con 1-2 emojis) basado en la siguiente nota periodística. El objetivo es captar la atención y dirigir al lector a leer más. No incluyas hashtags ni menciones.
 
         Nota periodística:
@@ -128,27 +204,46 @@ Enlace Original: ${noticia.link}`;
         socialMediaCopy = '[NO SE GENERÓ COPY POR ERROR EN LA NOTA]';
     }
 
+    // --- PUBLICAR EN WORDPRESS ---
+    if (generatedArticle && !generatedArticle.startsWith('[ERROR AL GENERAR NOTA')) {
+        wordpressPublishResult = await publishToWordPress(
+            noticia.title,
+            generatedArticle,
+            noticia.link,
+            socialMediaCopy,
+            { // Pasamos solo las credenciales relevantes aquí para la función publishToWordPress
+                wordpressApiUrl: wordpressCredentials.wordpressApiUrl,
+                wordpressApplicationPassword: wordpressCredentials.wordpressApplicationPassword,
+                wordpressUsername: wordpressCredentials.wordpressUsername // Aunque no se usa directamente en publishToWordPress, es bueno pasarlo para el authHeader
+            }
+        );
+    } else {
+        wordpressPublishResult = { status: 'skipped', message: 'No se intentó publicar en WordPress debido a un error en la generación de la nota.' };
+    }
 
-    resultadosGenerados.push({
+
+    processingResults.push({
       title: noticia.title,
       originalLink: noticia.link,
       source: noticia.source,
       newsArticle: generatedArticle,
-      socialMediaCopy: socialMediaCopy // ¡Nuevo campo para el copy de redes!
+      socialMediaCopy: socialMediaCopy,
+      wordpressPublication: wordpressPublishResult // Resultado de la publicación en WP
     });
   }
 
-  console.log('Finalizando la ejecución del flujo RSS a Nota Periodística y Copy para Redes. No se realizarán publicaciones.');
+  console.log('Finalizando la ejecución del flujo RSS a WordPress.');
   
   return {
     success: true,
-    message: 'Análisis de RSS, generación de notas periodísticas y copies para redes completados.',
+    message: 'Análisis de RSS, generación de contenido y publicación en WordPress completados.',
     summary: {
         totalNewsFound: noticias.length,
-        newsArticlesGenerated: resultadosGenerados.filter(r => !r.newsArticle.startsWith('[ERROR')).length,
-        socialMediaCopiesGenerated: resultadosGenerados.filter(r => !r.socialMediaCopy.startsWith('[ERROR')).length
+        newsArticlesGenerated: processingResults.filter(r => !r.newsArticle.startsWith('[ERROR')).length,
+        socialMediaCopiesGenerated: processingResults.filter(r => !r.socialMediaCopy.startsWith('[ERROR')).length,
+        wordpressPostsPublished: processingResults.filter(r => r.wordpressPublication.status === 'success').length
     },
-    generatedContent: resultadosGenerados // Devolvemos ambos resultados
+    generatedContentAndPublishResults: processingResults // Devolvemos todos los resultados
   };
 }
 
@@ -156,7 +251,7 @@ Enlace Original: ${noticia.link}`;
 // Definir una ruta HTTP para activar el flujo
 app.post('/', async (req, res) => {
     try {
-        const result = await executeRssToNewsArticleAndSocialCopyFlow(); // Nuevo nombre de función
+        const result = await executeRssToWordPressFlow();
         if (result.success) {
             res.status(200).json(result);
         } else {
