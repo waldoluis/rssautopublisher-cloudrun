@@ -1,23 +1,21 @@
-# Dockerfile
-
-# Usa una imagen base de Node.js
+# Usa una imagen base oficial de Node.js
 FROM node:20-slim
 
-# Crea y establece el directorio de trabajo dentro del contenedor
+# Establece el directorio de trabajo en /app
 WORKDIR /app
 
-# Copia los archivos de package.json y package-lock.json (si existe)
+# Copia los archivos package.json y package-lock.json
+# Esto permite que Docker use el caché de la capa de npm install
 COPY package*.json ./
 
-# Instala las dependencias del proyecto
+# Instala las dependencias de producción
 RUN npm install --production
 
 # Copia el resto del código de la aplicación
 COPY . .
 
-# Expone el puerto en el que la aplicación escuchará (Cloud Run usa la variable de entorno PORT)
-ENV PORT 8080
-EXPOSE ${PORT}
+# Expone el puerto que la aplicación escuchará
+EXPOSE 8080
 
-# Define el comando para iniciar la aplicación cuando el contenedor se ejecute
-CMD ["npm", "start"]
+# Define el comando para ejecutar la aplicación
+CMD ["node", "index.js"]
