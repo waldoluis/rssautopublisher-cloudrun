@@ -1,7 +1,20 @@
-"dependencies": {
-  "express": "^4.19.2",
-  "rss-parser": "^3.13.0",
-  "@google-cloud/vertexai": "^1.0.0", // <--- Esta es la línea que debe cambiar
-  "@google-cloud/secret-manager": "^5.0.0",
-  "axios": "^1.7.2"
-},
+{
+  "name": "rss-autopublisher-cloudrun",
+  "version": "1.0.0",
+  "description": "Servicio de Cloud Run para leer RSS, generar posts con Gemini y publicar en Facebook.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google-cloud/secret-manager": "^5.0.0",
+    "@google-cloud/vertexai": "^1.0.0",
+    "axios": "^1.0.0",
+    "express": "^4.19.2",
+    "rss-parser": "^3.13.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
