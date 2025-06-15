@@ -28,7 +28,6 @@ const generationConfig = {
 // Lista de RSS que analizarás (VERSION ACTUALIZADA Y CORRECTA)
 const rssFeeds = [
   'https://www.excelsior.com.mx/rss',
-  'https://elpais.com/rss',
   'https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/mexico/portada',
   'https://editorial.aristeguinoticias.com/category/mexico/feed/',
   'https://heraldodemexico.com.mx/rss/feed.html?r=4',
