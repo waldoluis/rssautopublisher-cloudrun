@@ -29,7 +29,7 @@ const secretManagerClient = new SecretManagerServiceClient();
 // Función auxiliar para acceder a secretos de Secret Manager
 async function accessSecretVersion(secretId, versionId = 'latest') {
     try {
-        const name = `projects/${project}/secrets/${secretId}/versions/${versionId}`;
+        const name = `projects/<span class="math-inline">\{project\}/secrets/</span>{secretId}/versions/${versionId}`;
         const [version] = await secretManagerClient.accessSecretVersion({ name });
         return version.payload.data.toString('utf8');
     } catch (error) {
@@ -40,11 +40,11 @@ async function accessSecretVersion(secretId, versionId = 'latest') {
 
 // Lista de RSS que analizarás
 const rssFeeds = [
-  'https://www.eluniversal.com.mx/rss.xml',
   'https://www.excelsior.com.mx/rss.xml',
-  'https://www.reforma.com/rss.xml', // Asegúrate de que sea .xml si es un feed XML válido
-  'https://www.jornada.com.mx/rss.xml',
   'https://elpais.com/rss/feed.html?feedId=1022',
+  'https://www.eleconomista.com.mx/rss.html',
+  'https://www.jornada.com.mx/v7.0/cgi/rss.php',
+  'https://www.proceso.com.mx/rss/', // Agregado: Proceso
 ];
 
 /**
@@ -60,7 +60,7 @@ async function executeRssToFacebookFlow() {
   for (const feedUrl of rssFeeds) {
     try {
       const feed = await parser.parseURL(feedUrl);
-      console.log(`Feed '${feed.title}' (${feedUrl}) parseado. Encontrados ${feed.items.length} elementos.`);
+      console.log(`Feed '<span class="math-inline">\{feed\.title\}' \(</span>{feedUrl}) parseado. Encontrados ${feed.items.length} elementos.`);
       feed.items.forEach(item => {
         noticias.push({
           title: item.title,
@@ -96,8 +96,8 @@ async function executeRssToFacebookFlow() {
 
 No uses hashtags ni menciones. Máximo 4 líneas.
 
-Título de la Noticia: "${noticia.title}"
-Contenido/Extracto: "${noticia.contentSnippet}"
+Título de la Noticia: "<span class="math-inline">\{noticia\.title\}"
+Contenido/Extracto\: "</span>{noticia.contentSnippet}"
 Enlace: ${noticia.link}`;
 
     const request = {
@@ -199,16 +199,4 @@ app.post('/', async (req, res) => {
         if (result.success) {
             res.status(200).json(result);
         } else {
-            res.status(500).json(result); // Enviar error si el flujo no fue exitoso
-        }
-    } catch (error) {
-        console.error(`[ERROR FATAL] Error en el endpoint de Cloud Run: ${error.message}`);
-        res.status(500).send(`Error interno del servidor: ${error.message}`);
-    }
-});
-
-// Cloud Run proporciona el puerto en la variable de entorno PORT
-const PORT = parseInt(process.env.PORT) || 8080;
-app.listen(PORT, () => {
-  console.log(`La aplicación está escuchando en el puerto ${PORT}`);
-});
+            res.status(500).json(
