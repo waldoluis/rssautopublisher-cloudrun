@@ -4,8 +4,8 @@ const express = require('express');
 const Parser = require('rss-parser');
 const parser = new Parser();
 const { VertexAI } = require('@google-cloud/vertexai');
-const { SecretManagerServiceClient } = require('@google-cloud/secret-manager'); // Re-importado para credenciales de WordPress
-const axios = require('axios'); // Re-importado para la API de WordPress
+const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
+const axios = require('axios');
 
 const app = express();
 app.use(express.json());
@@ -24,7 +24,7 @@ const generationConfig = {
   temperature: 0.7,
 };
 
-const secretManagerClient = new SecretManagerServiceClient(); // Inicializado para Secret Manager
+const secretManagerClient = new SecretManagerServiceClient();
 
 // Función auxiliar para acceder a secretos de Secret Manager
 async function accessSecretVersion(secretId, versionId = 'latest') {
@@ -51,7 +51,7 @@ const rssFeeds = [
  * Requiere la URL de la API de WordPress y el Application Password.
  */
 async function publishToWordPress(title, content, link, socialMediaCopy, credentials) {
-    const { wordpressApiUrl, wordpressApplicationPassword } = credentials;
+    const { wordpressApiUrl, wordpressApplicationPassword, wordpressUsername } = credentials;
 
     // Puedes elegir qué contenido enviar. Aquí envío la nota completa y el copy como contenido.
     // También puedes crear un post separado para el copy de redes, o incluirlo en la nota.
@@ -76,17 +76,20 @@ async function publishToWordPress(title, content, link, socialMediaCopy, credent
             headers: {
                 'Content-Type': 'application/json',
                 // La autenticación básica usa "usuario:ApplicationPassword" codificado en Base64
-                'Authorization': `Basic ${Buffer.from(`tu_usuario_wordpress:${wordpressApplicationPassword}`).toString('base64')}`
+                'Authorization': `Basic ${Buffer.from(`${wordpressUsername}:${wordpressApplicationPassword}`).toString('base64')}`
             }
         });
-        console.log(`[ÉXITO] Publicado en WordPress: "${title}". ID del post: ${response.data.id}`);
+        console.log(`[ÉXITO] Publicado en WordPress: "${title}". ID del post: ${response.data.id}, URL: ${response.data.link}`);
         return { status: 'success', postId: response.data.id, link: response.data.link };
     } catch (wpError) {
         console.error(`[ERROR] Fallo al publicar "${title}" en WordPress: ${wpError.message}`);
         if (wpError.response) {
             console.error(`Respuesta de error de WordPress: ${JSON.stringify(wpError.response.data)}`);
+            if (wpError.response.data && wpError.response.data.code === 'rest_post_invalid_id') {
+                console.error('Posible error de credenciales o permisos de usuario en WordPress. Verifica el usuario y la contraseña de aplicación.');
+            }
         }
-        return { status: 'failed', error: wpError.message };
+        return { status: 'failed', error: wpError.message, responseData: wpError.response ? wpError.response.data : null };
     }
 }
 
@@ -105,10 +108,8 @@ async function executeRssToWordPressFlow() {
       wordpressCredentials = JSON.parse(credsJson);
       // Validar que las credenciales tienen los campos esperados
       if (!wordpressCredentials.wordpressApiUrl || !wordpressCredentials.wordpressApplicationPassword || !wordpressCredentials.wordpressUsername) {
-          throw new Error('Las credenciales de WordPress no están completas en Secret Manager.');
+          throw new Error('Las credenciales de WordPress no están completas en Secret Manager (falta URL, Password o Username).');
       }
-      // Reemplaza 'tu_usuario_wordpress' en la autorización con el usuario real
-      wordpressCredentials.authHeader = `Basic ${Buffer.from(`${wordpressCredentials.wordpressUsername}:${wordpressCredentials.wordpressApplicationPassword}`).toString('base64')}`;
       console.log('Credenciales de WordPress obtenidas con éxito.');
   } catch (error) {
       console.error(`[ERROR FATAL] No se pudieron obtener o parsear las credenciales de WordPress: ${error.message}`);
@@ -211,11 +212,7 @@ Enlace Original: ${noticia.link}`;
             generatedArticle,
             noticia.link,
             socialMediaCopy,
-            { // Pasamos solo las credenciales relevantes aquí para la función publishToWordPress
-                wordpressApiUrl: wordpressCredentials.wordpressApiUrl,
-                wordpressApplicationPassword: wordpressCredentials.wordpressApplicationPassword,
-                wordpressUsername: wordpressCredentials.wordpressUsername // Aunque no se usa directamente en publishToWordPress, es bueno pasarlo para el authHeader
-            }
+            wordpressCredentials // Pasamos el objeto completo de credenciales
         );
     } else {
         wordpressPublishResult = { status: 'skipped', message: 'No se intentó publicar en WordPress debido a un error en la generación de la nota.' };
@@ -228,7 +225,7 @@ Enlace Original: ${noticia.link}`;
       source: noticia.source,
       newsArticle: generatedArticle,
       socialMediaCopy: socialMediaCopy,
-      wordpressPublication: wordpressPublishResult // Resultado de la publicación en WP
+      wordpressPublication: wordpressPublishResult
     });
   }
 
@@ -243,7 +240,7 @@ Enlace Original: ${noticia.link}`;
         socialMediaCopiesGenerated: processingResults.filter(r => !r.socialMediaCopy.startsWith('[ERROR')).length,
         wordpressPostsPublished: processingResults.filter(r => r.wordpressPublication.status === 'success').length
     },
-    generatedContentAndPublishResults: processingResults // Devolvemos todos los resultados
+    generatedContentAndPublishResults: processingResults
   };
 }
 
@@ -255,7 +252,7 @@ app.post('/', async (req, res) => {
         if (result.success) {
             res.status(200).json(result);
         } else {
-            res.status(500).json(result); // Enviar error si el flujo no fue exitoso
+            res.status(500).json(result);
         }
     } catch (error) {
         console.error(`[ERROR FATAL] Error en el endpoint de Cloud Run: ${error.message}`);
